@@ -7,6 +7,24 @@ import os
 from datetime import datetime
 from elevenlabs.client import ElevenLabs
 
+import json
+import random
+
+USED_TOPICS_FILE = "used_topics.json"
+
+def load_used_topics() -> list:
+    if os.path.exists(USED_TOPICS_FILE):
+        with open(USED_TOPICS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    return []
+
+def save_used_topic(topic: str):
+    topics = load_used_topics()
+    topics.append(topic)
+    topics = topics[-20:]   # keep last 20 only
+    with open(USED_TOPICS_FILE, "w", encoding="utf-8") as f:
+        json.dump(topics, f)
+
 load_dotenv()
 
 month = datetime.now().strftime("%B")
@@ -37,6 +55,7 @@ TARGET_WORD_COUNT = int((TARGET_DURATION_SECONDS / 60) * WORDS_PER_MINUTE)
 
 
 
+
 class StoryState(TypedDict):
     trending_topic: str
     chosen_value: str
@@ -59,28 +78,49 @@ class StoryState(TypedDict):
 
 # ── Node 1: Trend Researcher ──────────────────────────────────────────────────
 def trend_researcher(state: StoryState) -> dict:
-    logger.info("[Trend Researcher] Searching Tavily for trending kids topics...")
+    logger.info("[Trend Researcher] Searching for trending kids topics...")
 
-    results = tavily.search(
-    query=f"trending topics kids aged 4-8 {month} 2026",
-    max_results=5
-    )
+    used_topics = load_used_topics()
+    avoid_str = ", ".join(used_topics[-10:]) if used_topics else "none"
+
+    # Rotate queries so we don't always hit the same search angle
+    search_queries = [
+        f"trending kids activities hobbies {month} 2026",
+        f"popular kids story themes {month} 2026",
+        f"what are children interested in {month} 2026",
+        f"kids learning topics educational {month} 2026",
+        f"popular kids shows themes {month} 2026",
+    ]
+    query = random.choice(search_queries)
+    logger.info(f"[Trend Researcher] Search query: {query}")
+
+    results = tavily.search(query=query, max_results=7)
 
     snippets = "\n".join(
         f"- {r['title']}: {r['content'][:150]}"
         for r in results.get("results", [])
     )
 
-    prompt = f"""Based on these search results about what kids aged 4-8 are interested in right now:
+    prompt = f"""You are a children's story writer.
+    Write a fun, engaging story for kids aged 4-8 based on this outline:
 
-{snippets}
+    {state['outline']}
 
-Pick ONE specific topic that would make a great children's story.
-Reply with just the topic name, nothing else. Example: "Dinosaurs" or "Minecraft" or "Bluey"."""
+    Requirements:
+    - Simple language a 5-year-old understands
+    - Short sentences
+    - Warm and positive tone
+    - Naturally teach the value of {state['chosen_value']}
+    - Length: {TARGET_WORD_COUNT - 20} to {TARGET_WORD_COUNT} words (be strict, do not exceed)
+    - Each paragraph should be a separate scene
+    - Separate each paragraph with a blank line
+    - Each paragraph = one scene (different moment in the story){feedback_section}"""
 
     response = llm.invoke(prompt)
     topic = response.content.strip()
     logger.info(f"[Trend Researcher] Topic selected: {topic}")
+
+    save_used_topic(topic)   # ← record it immediately
     return {"trending_topic": topic}
 
 
@@ -352,3 +392,14 @@ def save_content(state: StoryState) -> dict:
 
     asyncio.run(run_mcp())
     return {}
+# ── Node 0: Check Topic (entry point) ────────────────────────────────────────
+def check_topic_node(state: StoryState) -> dict:
+    """No-op node — just routes based on whether topic is pre-filled."""
+    return {}
+
+def route_entry(state: StoryState) -> str:
+    if state.get("trending_topic", "").strip():
+        logger.info(f"[Router] User-provided topic: '{state['trending_topic']}' — skipping researcher")
+        return "outline_agent"
+    logger.info("[Router] No topic provided — running trend researcher")
+    return "trend_researcher"

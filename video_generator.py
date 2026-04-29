@@ -48,62 +48,30 @@ def split_into_paragraphs(story: str) -> list[str]:
 
 
 def build_image_prompt(paragraph: str, title: str, value: str) -> str:
-    """Turn a story paragraph into a vivid Flux image prompt."""
     return (
-        f"Children's illustrated storybook scene, bright cheerful colors, "
-        f"soft cartoon style, safe for kids aged 4-8. "
-        f"Scene: {paragraph[:200]} "
-        f"Theme: {value}. "
-        f"Style: Pixar-inspired, warm lighting, no text, no words in image."
+        f"Children's storybook illustration, comic panel style, "
+        f"bright vibrant colors, Pixar/Disney movie quality rendering, "
+        f"expressive cute cartoon characters with big eyes, "
+        f"bold clean outlines, cel shaded art style, "
+        f"soft warm cinematic lighting, "
+        f"safe for kids aged 4-10, cheerful and positive mood, "
+        f"highly detailed background, "
+        f"no text, no words, no letters, no watermark in image. "
+        f"Scene: {paragraph[:250]}. "
+        f"Moral theme: {value}. "
+        f"Art direction: Saturday morning cartoon meets Pixar, "
+        f"character design similar to Bluey or Peppa Pig style."
+        f"no text, no words, no letters, no watermark, no signs, no captions in image. "
     )
 
-
-
-# def generate_image_hf(prompt: str, save_path: str, retries: int = 3) -> bool:
-#     from google import genai
-#     from google.genai import types
-
-#     client = genai.Client(api_key=GEMINI_API_KEY)
-
-#     full_prompt = (
-#         f"Children's storybook illustration, comic panel style, "
-#         f"bright vibrant colors, Pixar/Disney quality, "
-#         f"expressive cute characters, safe for kids aged 4-10, "
-#         f"no text or words in image. Scene: {prompt}"
-#     )
-
-#     for attempt in range(1, retries + 1):
-#         try:
-#             logger.info(f"[Image Gen] Attempt {attempt} — generating image...")
-#             response = client.models.generate_content(
-#                 model="gemini-2.5-flash-image",
-#                 contents=full_prompt,
-#                 config=types.GenerateContentConfig(
-#                     response_modalities=["IMAGE"],
-#                 ),
-#             )
-#             for part in response.candidates[0].content.parts:
-#                 if part.inline_data is not None:
-#                     with open(save_path, "wb") as f:
-#                         f.write(part.inline_data.data)
-#                     logger.info(f"[Image Gen] Saved to {save_path}")
-#                     return True
-
-#             logger.error("[Image Gen] No image part found in response")
-
-#         except Exception as e:
-#             logger.error(f"[Image Gen] Attempt {attempt} failed: {e}")
-#             time.sleep(5 * attempt)
-
-#     return False
 
 def generate_image_hf(prompt: str, save_path: str, retries: int = 3) -> bool:
     """Generate image using Pollinations.AI — free, no API key needed."""
     import urllib.parse
     encoded_prompt = urllib.parse.quote(prompt)
     url = (
-        f"https://image.pollinations.ai/prompt/{encoded_prompt}"
-        f"?width={VIDEO_W}&height={VIDEO_H}&model=flux-pro&nologo=true&safe=true"
+    f"https://image.pollinations.ai/prompt/{encoded_prompt}"
+    f"?width={VIDEO_W}&height={VIDEO_H}&model=flux-pro&nologo=true&safe=true&enhance=true"
     )
 
     for attempt in range(1, retries + 1):
@@ -153,22 +121,57 @@ def get_audio_duration(audio_path: str) -> float:
         return dur
 
 
-def make_subtitle_clip(text: str, video_w: int, video_h: int, duration: float):
-    """Create a subtitle TextClip positioned at the bottom of the frame."""
+# def make_subtitle_clip(text: str, video_w: int, video_h: int, duration: float):
+#     """Create a subtitle TextClip positioned at the bottom of the frame."""
+#     wrapped = wrap_text(text)
+#     txt_clip = (
+#     TextClip(
+#         text=wrapped,
+#         font_size=FONT_SIZE,
+#         color=SUBTITLE_FG,
+#         bg_color=(0, 0, 0, 160),   # ← RGBA tuple, not CSS string
+#         method="caption",
+#         size=(video_w - 80, None),
+#     )
+#     .with_duration(duration)
+#     .with_position(("center", video_h - 160))
+#     )
+#     return txt_clip
+
+def burn_subtitle_onto_image(image_path: str, text: str, output_path: str):
+    """Burn subtitle text directly onto image using Pillow — no moviepy TextClip needed."""
+    img = Image.open(image_path).convert("RGB").resize((VIDEO_W, VIDEO_H), Image.LANCZOS)
+    draw = ImageDraw.Draw(img, "RGBA")
+
+    # Try to load a font, fall back to default
+    try:
+        font = ImageFont.truetype("arial.ttf", FONT_SIZE)
+    except:
+        font = ImageFont.load_default()
+
     wrapped = wrap_text(text)
-    txt_clip = (
-    TextClip(
-        text=wrapped,
-        font_size=FONT_SIZE,
-        color=SUBTITLE_FG,
-        bg_color=(0, 0, 0, 160),   # ← RGBA tuple, not CSS string
-        method="caption",
-        size=(video_w - 80, None),
+
+    # Measure text block size
+    lines = wrapped.split("\n")
+    line_height = FONT_SIZE + 8
+    block_height = line_height * len(lines) + 20
+    block_y = VIDEO_H - block_height - 30
+
+    # Draw semi-transparent background
+    draw.rectangle(
+        [(0, block_y - 10), (VIDEO_W, VIDEO_H - 20)],
+        fill=(0, 0, 0, 160)
     )
-    .with_duration(duration)
-    .with_position(("center", video_h - 160))
-    )
-    return txt_clip
+
+    # Draw each line of text
+    for i, line in enumerate(lines):
+        bbox = draw.textbbox((0, 0), line, font=font)
+        text_w = bbox[2] - bbox[0]
+        x = (VIDEO_W - text_w) // 2
+        y = block_y + i * line_height
+        draw.text((x, y), line, font=font, fill="white")
+
+    img.save(output_path)
 
 
 # ── Main Node ─────────────────────────────────────────────────────────────────
@@ -235,12 +238,12 @@ def video_generator(state: dict) -> dict:
     try:
         clips = []
         for i, (img_path, para) in enumerate(zip(image_paths, paragraphs)):
-            img = Image.open(img_path).convert("RGB").resize((VIDEO_W, VIDEO_H), Image.LANCZOS)
-            img.save(img_path)
-            img_clip = ImageClip(img_path).with_duration(per_paragraph)
-            subtitle = make_subtitle_clip(para, VIDEO_W, VIDEO_H, per_paragraph)
-            composite = CompositeVideoClip([img_clip, subtitle])
-            clips.append(composite)
+            # Burn subtitle directly onto image — no TextClip
+            burned_path = f"{folder}/frame_{i:02d}_sub.png"
+            burn_subtitle_onto_image(img_path, para, burned_path)
+
+            img_clip = ImageClip(burned_path).with_duration(per_paragraph)
+            clips.append(img_clip)
 
         # ── 5. Concatenate ────────────────────────────────────────────────────
         final_video = concatenate_videoclips(clips, method="compose")
