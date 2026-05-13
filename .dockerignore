@@ -1,0 +1,11 @@
+.env
+.venv
+__pycache__
+stories/
+archive/
+stories_gtts/
+*.pickle
+*.log
+credentials.json
+token.pickle
+image.png
