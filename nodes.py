@@ -49,7 +49,7 @@ llm = ChatGroq(
 tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
 
 VALUES = ["kindness", "courage", "honesty", "friendship", "patience", "gratitude", "perseverance"]
-TARGET_DURATION_SECONDS = 15
+TARGET_DURATION_SECONDS = 90
 WORDS_PER_MINUTE = 140
 TARGET_WORD_COUNT = int((TARGET_DURATION_SECONDS / 60) * WORDS_PER_MINUTE)
 
