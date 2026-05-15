@@ -57,6 +57,7 @@ jobs:
             --allow-unauthenticated \
             --memory 2Gi \
             --timeout 3600 \
+            --set-env-vars "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }},GCP_PROJECT_ID=kids-content-generator" \
             --quiet
 
       - name: Show Service URL

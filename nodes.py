@@ -60,6 +60,7 @@ class StoryState(TypedDict):
     trending_topic: str
     chosen_value: str
     outline: str
+    character_descriptions: str          # ← new: visual prompt spec for each character
     story: str
     safety_score: float
     educational_score: float
@@ -129,7 +130,8 @@ def outline_agent(state: StoryState) -> dict:
     import random
     chosen_value = random.choice(VALUES)
 
-    prompt = f"""You are a children's story planner.
+    # ── Step 1: Generate story outline ───────────────────────────────────────
+    outline_prompt = f"""You are a children's story planner.
 Topic: {state['trending_topic']}
 Value to teach: {chosen_value}
 
@@ -142,11 +144,44 @@ Write a short story outline with these sections:
 
 Keep it simple and suitable for ages 4-8."""
 
-    response = llm.invoke(prompt)
+    outline_response = llm.invoke(outline_prompt)
+    outline = outline_response.content.strip()
+
+    # ── Step 2: Extract detailed visual character descriptions ────────────────
+    character_prompt = f"""You are an animation art director for a children's cartoon show.
+
+Based on this story outline, write a detailed visual description for each character.
+These descriptions will be used as image generation prompts to keep characters
+visually consistent across every scene of the video.
+
+For each character include ALL of the following:
+- Species and body type (e.g. small red ant, giant grey elephant)
+- Gender
+- Eye color and shape (e.g. big sparkly green eyes, kind droopy brown eyes)
+- Skin/fur/shell/body color and texture
+- Clothing (be very specific: color, type, any patterns)
+- 1-2 unique accessories (e.g. tiny yellow backpack with star patch, purple hibiscus flower behind left ear)
+- Any distinctive markings or features
+- Personality shown through appearance (e.g. cheerful smile, wise gentle expression)
+- Art style note: cel-shaded cartoon, Pixar/Bluey style, bold clean outlines, bright colors
+
+Format EXACTLY like this — one character per block, nothing else:
+CHARACTER: <name>
+DESCRIPTION: <full visual description in one paragraph, written as an image generation prompt>
+
+Story outline:
+{outline}"""
+
+    character_response = llm.invoke(character_prompt)
+    character_descriptions = character_response.content.strip()
+
     logger.info(f"[Outline Agent] Value chosen: {chosen_value}")
+    logger.info(f"[Outline Agent] Character descriptions generated")
+
     return {
         "chosen_value": chosen_value,
-        "outline": response.content.strip()
+        "outline": outline,
+        "character_descriptions": character_descriptions,   # ← new
     }
 
 

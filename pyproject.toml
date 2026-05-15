@@ -26,4 +26,5 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "requests>=2.33.1",
     "tavily-python>=0.7.23",
+    "google-cloud-aiplatform>=1.60.0",
 ]
