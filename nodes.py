@@ -60,7 +60,8 @@ class StoryState(TypedDict):
     trending_topic: str
     chosen_value: str
     outline: str
-    character_descriptions: str          # ← new: visual prompt spec for each character
+    character_descriptions: str
+    scene_prompts: list        # ← new: list of {"scene": str, "characters": list[str]}
     story: str
     safety_score: float
     educational_score: float
@@ -74,8 +75,7 @@ class StoryState(TypedDict):
     thumbnail_concept: str
     audio_path: str
     story_id: str
-    video_path: str 
-
+    video_path: str
 
 # ── Node 1: Trend Researcher ──────────────────────────────────────────────────
 def trend_researcher(state: StoryState) -> dict:
@@ -150,24 +150,24 @@ Keep it simple and suitable for ages 4-8."""
     # ── Step 2: Extract detailed visual character descriptions ────────────────
     character_prompt = f"""You are an animation art director for a children's cartoon show.
 
-Based on this story outline, write a detailed visual description for each character.
-These descriptions will be used as image generation prompts to keep characters
-visually consistent across every scene of the video.
+Based on this story outline, write a compact visual description for each character.
+These will be used as image generation prompts — keyword style, not prose.
 
-For each character include ALL of the following:
-- Species and body type (e.g. small red ant, giant grey elephant)
-- Gender
-- Eye color and shape (e.g. big sparkly green eyes, kind droopy brown eyes)
-- Skin/fur/shell/body color and texture
-- Clothing (be very specific: color, type, any patterns)
-- 1-2 unique accessories (e.g. tiny yellow backpack with star patch, purple hibiscus flower behind left ear)
-- Any distinctive markings or features
-- Personality shown through appearance (e.g. cheerful smile, wise gentle expression)
-- Art style note: cel-shaded cartoon, Pixar/Bluey style, bold clean outlines, bright colors
+For each character include:
+- Species, age, gender
+- Hair/fur color and style
+- Eye color
+- Clothing (color + type)
+- 1 unique accessory
+- Art style: cel-shaded cartoon, bold outlines, bright colors
 
-Format EXACTLY like this — one character per block, nothing else:
+Format EXACTLY like this:
 CHARACTER: <name>
-DESCRIPTION: <full visual description in one paragraph, written as an image generation prompt>
+DESCRIPTION: <name>: <species/age/gender>, <hair>, <eye color>, <clothing>, <accessory>. Cel-shaded cartoon style, bold clean outlines, bright colors.
+
+Example:
+CHARACTER: Emma
+DESCRIPTION: Emma: shy 6-year-old girl, curly brown hair, big brown eyes, light blue floral dress, white socks, pink hair clip. Cel-shaded cartoon style, bold clean outlines, bright colors.
 
 Story outline:
 {outline}"""
@@ -209,6 +209,89 @@ Requirements:
     response = llm.invoke(prompt)
     logger.info(f"[Story Writer] Story written (retry #{state.get('retry_count', 0)})")
     return {"story": response.content.strip()}
+
+# ── Node 3.5: Scene Prompt Agent ──────────────────────────────────────────────
+def scene_prompt_agent(state: StoryState) -> dict:
+    """Convert each story paragraph into a visual scene description for Imagen."""
+    logger.info("[Scene Prompt Agent] Generating visual scene descriptions...")
+
+    story = state["story"]
+    character_descriptions = state.get("character_descriptions", "")
+
+    # Split into paragraphs same way video_generator does
+    paragraphs = [p.strip() for p in story.split("\n") if p.strip()]
+
+    # Extract character names from descriptions
+    character_names = []
+    for line in character_descriptions.splitlines():
+        if line.startswith("CHARACTER:"):
+            name = line.replace("CHARACTER:", "").strip()
+            character_names.append(name)
+
+    names_str = ", ".join(character_names)
+    paragraphs_str = "\n".join(
+        f"PARAGRAPH {i+1}: {p}" for i, p in enumerate(paragraphs)
+    )
+
+    prompt = f"""You are a visual director for a children's animated storybook.
+
+Convert each story paragraph into a visual scene description for an image generator.
+Also identify which characters from the list appear in each scene.
+
+Rules:
+- Describe only what is VISIBLE — setting, characters present, actions, expressions, objects
+- No dialogue, no narrative, no emotions told — only what a camera would see
+- Keep each scene description under 50 words
+- Only include characters who are actually present in that paragraph
+
+Available characters: {names_str}
+
+{paragraphs_str}
+
+Reply ONLY in this exact format, one block per paragraph:
+SCENE 1:
+DESCRIPTION: <visual scene description>
+CHARACTERS: <comma-separated character names present, or NONE>
+
+SCENE 2:
+DESCRIPTION: <visual scene description>
+CHARACTERS: <comma-separated character names present, or NONE>
+
+(continue for all paragraphs)"""
+
+    response = llm.invoke(prompt)
+    raw = response.content.strip()
+
+    # Parse the response
+    scene_prompts = []
+    blocks = raw.split("\n\n")
+    for block in blocks:
+        lines = block.strip().splitlines()
+        scene_desc = ""
+        characters = []
+        for line in lines:
+            if line.startswith("DESCRIPTION:"):
+                scene_desc = line.replace("DESCRIPTION:", "").strip()
+            elif line.startswith("CHARACTERS:"):
+                chars_raw = line.replace("CHARACTERS:", "").strip()
+                if chars_raw.upper() != "NONE":
+                    characters = [c.strip() for c in chars_raw.split(",")]
+        if scene_desc:
+            scene_prompts.append({
+                "scene": scene_desc,
+                "characters": characters
+            })
+
+    # Fallback — if parsing fails, use raw paragraphs
+    if len(scene_prompts) != len(paragraphs):
+        logger.warning(f"[Scene Prompt Agent] Parsed {len(scene_prompts)} scenes but expected {len(paragraphs)} — using fallback")
+        scene_prompts = [
+            {"scene": p, "characters": character_names}
+            for p in paragraphs
+        ]
+
+    logger.info(f"[Scene Prompt Agent] Generated {len(scene_prompts)} scene prompts")
+    return {"scene_prompts": scene_prompts}
 
 
 # ── Node 4: Quality Critic ────────────────────────────────────────────────────

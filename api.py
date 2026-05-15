@@ -27,13 +27,15 @@ def run_pipeline(topic: str = ""):
     story_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     initial_state = {
         "trending_topic":    topic,
+        "character_descriptions": "",
+        "scene_prompts":     [], 
         "chosen_value":      "",
         "outline":           "",
         "story":             "",
         "safety_score":      0.0,
         "educational_score": 0.0,
         "engagement_score":  0.0,
-        "critic_feedback":   "",
+        "critic_feedback":   "",    
         "retry_count":       0,
         "passed_quality":    False,
         "title":             "",

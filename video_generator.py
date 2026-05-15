@@ -186,38 +186,49 @@ def burn_subtitle_onto_image(image_path: str, text: str, output_path: str):
 # ── Main Node ─────────────────────────────────────────────────────────────────
 
 def video_generator(state: dict) -> dict:
-    """
-    LangGraph node: generates one image per story paragraph via Imagen 3,
-    then assembles them with the existing audio.mp3 into a video.mp4.
-
-    Reads from state:
-        story, title, chosen_value, character_descriptions, audio_path, story_id
-
-    Writes to state:
-        video_path
-    """
     logger.info("[Video Generator] Starting video assembly...")
 
     story                  = state["story"]
     title                  = state.get("title", "Kids Story")
     value                  = state.get("chosen_value", "kindness")
-    character_descriptions = state.get("character_descriptions", "")   # ← new
+    character_descriptions = state.get("character_descriptions", "")
+    scene_prompts          = state.get("scene_prompts", [])
     audio_path             = state["audio_path"]
     story_id               = state["story_id"]
     folder                 = f"stories/story_{story_id}"
 
-    # ── 1. Split story into paragraphs ────────────────────────────────────────
+    # ── 1. Get paragraphs for subtitles + scene prompts for images ────────────
     paragraphs = split_into_paragraphs(story)
-    logger.info(f"[Video Generator] {len(paragraphs)} paragraphs found")
+
+    # Fallback — if scene_prompts missing or mismatched, use raw paragraphs
+    if not scene_prompts or len(scene_prompts) != len(paragraphs):
+        logger.warning("[Video Generator] scene_prompts missing or mismatched — falling back to raw paragraphs")
+        scene_prompts = [
+            {"scene": p, "characters": []}
+            for p in paragraphs
+        ]
+
+    logger.info(f"[Video Generator] {len(paragraphs)} paragraphs, {len(scene_prompts)} scene prompts")
 
     # ── 2. Get total audio duration & divide per paragraph ───────────────────
     total_duration = get_audio_duration(audio_path)
     per_paragraph  = total_duration / len(paragraphs)
     logger.info(f"[Video Generator] Audio duration: {total_duration:.1f}s, {per_paragraph:.1f}s per paragraph")
 
-    # ── 3. Generate one image per paragraph ──────────────────────────────────
+    # ── 3. Build per-scene character descriptions ─────────────────────────────
+    # Parse full character_descriptions into dict keyed by name
+    char_desc_map = {}
+    current_name = None
+    for line in character_descriptions.splitlines():
+        if line.startswith("CHARACTER:"):
+            current_name = line.replace("CHARACTER:", "").strip()
+        elif line.startswith("DESCRIPTION:") and current_name:
+            char_desc_map[current_name] = line.replace("DESCRIPTION:", "").strip()
+            current_name = None
+
+    # ── 4. Generate one image per scene ──────────────────────────────────────
     image_paths = []
-    for i, para in enumerate(paragraphs):
+    for i, scene in enumerate(scene_prompts):
         img_path = f"{folder}/frame_{i:02d}.png"
 
         if os.path.exists(img_path):
@@ -225,12 +236,31 @@ def video_generator(state: dict) -> dict:
             image_paths.append(img_path)
             continue
 
-        prompt  = build_image_prompt(para, title, value, character_descriptions)   # ← pass chars
+        # Only inject character descriptions for characters in this scene
+        scene_chars = scene.get("characters", [])
+        if scene_chars:
+            scene_char_desc = "\n".join(
+                f"CHARACTER: {name}\nDESCRIPTION: {char_desc_map[name]}"
+                for name in scene_chars
+                if name in char_desc_map
+            )
+        else:
+            scene_char_desc = character_descriptions  # fallback: inject all
+
+        prompt = build_image_prompt(
+            scene["scene"],       # ← visual scene description, not raw paragraph
+            title,
+            value,
+            scene_char_desc       # ← only relevant characters
+        )
+
+        logger.info(f"[Video Generator] Frame {i} — scene: {scene['scene'][:80]}...")
+        logger.info(f"[Video Generator] Frame {i} — characters: {scene_chars}")
+
         success = generate_image_imagen(prompt, img_path)
 
         if not success:
             logger.warning(f"[Video Generator] Frame {i} failed — using fallback solid color image")
-            # Fallback: plain colored image so the pipeline doesn't crash
             fallback = Image.new("RGB", (VIDEO_W, VIDEO_H), color=(70, 130, 180))
             draw = ImageDraw.Draw(fallback)
             draw.text((VIDEO_W // 2, VIDEO_H // 2), f"Scene {i+1}", fill="white", anchor="mm")
@@ -238,32 +268,27 @@ def video_generator(state: dict) -> dict:
 
         image_paths.append(img_path)
 
-        # Small delay between Imagen API calls
-        if i < len(paragraphs) - 1:
-            logger.info(f"[Video Generator] Waiting 65s for Imagen quota reset... (frame {i+1}/{len(paragraphs)-1} next)")
+        if i < len(scene_prompts) - 1:
+            logger.info(f"[Video Generator] Waiting 65s for Imagen quota reset... (frame {i+1}/{len(scene_prompts)-1} next)")
             time.sleep(65)
 
-    # ── 4. Build video clips ──────────────────────────────────────────────────
+    # ── 5. Build video clips ──────────────────────────────────────────────────
     video_path = f"{folder}/video.mp4"
 
     try:
         clips = []
         for i, (img_path, para) in enumerate(zip(image_paths, paragraphs)):
-            # Burn subtitle directly onto image — no TextClip
+            # Subtitles still use original paragraph text
             burned_path = f"{folder}/frame_{i:02d}_sub.png"
             burn_subtitle_onto_image(img_path, para, burned_path)
 
             img_clip = ImageClip(burned_path).with_duration(per_paragraph)
             clips.append(img_clip)
 
-        # ── 5. Concatenate ────────────────────────────────────────────────────
         final_video = concatenate_videoclips(clips, method="compose")
-
-        # ── 6. Attach audio ───────────────────────────────────────────────────
         audio_clip = AudioFileClip(audio_path)
         final_video = final_video.with_audio(audio_clip)
 
-        # ── 7. Export MP4 ─────────────────────────────────────────────────────
         final_video.write_videofile(
             video_path,
             fps=24,
@@ -277,9 +302,9 @@ def video_generator(state: dict) -> dict:
 
     except Exception as e:
         logger.error(f"[Video Generator] Video assembly failed: {e}")
-        video_path = ""   # mark as failed but continue
+        video_path = ""
 
-    # ── 8. Save JSON always ───────────────────────────────────────────────────
+    # ── 6. Save JSON ──────────────────────────────────────────────────────────
     import json
     json_path = f"{folder}/story.json"
     output = {
@@ -287,6 +312,7 @@ def video_generator(state: dict) -> dict:
         "value": state.get("chosen_value"),
         "outline": state.get("outline"),
         "character_descriptions": character_descriptions,
+        "scene_prompts": scene_prompts,
         "story": state.get("story"),
         "scores": {
             "safety": state.get("safety_score"),
