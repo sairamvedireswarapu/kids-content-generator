@@ -9,6 +9,9 @@ import os
 import threading
 import json
 
+import logging
+logger = logging.getLogger(__name__)
+
 # ── LangSmith observability (2 lines) ────────────────────────────────────────
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
 os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGCHAIN_API_KEY", "")
@@ -29,6 +32,7 @@ def run_pipeline_bg(story_id: str, initial_state: dict):
     try:
         graph = build_graph()
         result = graph.invoke(initial_state)
+        logger.info(f"[DEBUG] result keys: title={result.get('title')} audio={result.get('audio_path')} video={result.get('video_path')} story_id={result.get('story_id')}")
 
         cwd = os.getcwd()
         audio_path = result.get("audio_path")
