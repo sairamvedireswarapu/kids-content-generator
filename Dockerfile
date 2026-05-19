@@ -27,6 +27,7 @@ COPY graph.py .
 COPY video_generator.py .
 COPY mcp_server.py .
 COPY api.py .
+COPY index.html .
 
 # Expose port
 EXPOSE 8080
