@@ -5,8 +5,6 @@ from dotenv import load_dotenv
 import logging
 import os
 from datetime import datetime
-from elevenlabs.client import ElevenLabs
-
 import json
 import random
 
@@ -21,14 +19,13 @@ def load_used_topics() -> list:
 def save_used_topic(topic: str):
     topics = load_used_topics()
     topics.append(topic)
-    topics = topics[-20:]   # keep last 20 only
+    topics = topics[-20:]
     with open(USED_TOPICS_FILE, "w", encoding="utf-8") as f:
         json.dump(topics, f)
 
 load_dotenv()
 
 month = datetime.now().strftime("%B")
-
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,18 +39,74 @@ logger = logging.getLogger(__name__)
 
 llm = ChatGroq(
     model="llama-3.3-70b-versatile",
-    api_key=os.getenv("GROQ_API_KEY"), 
-    temperature= 0.9 
+    api_key=os.getenv("GROQ_API_KEY"),
+    temperature=0.9
 )
 
 tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
 
 VALUES = ["kindness", "courage", "honesty", "friendship", "patience", "gratitude", "perseverance"]
-TARGET_DURATION_SECONDS = 90
 WORDS_PER_MINUTE = 140
-TARGET_WORD_COUNT = int((TARGET_DURATION_SECONDS / 60) * WORDS_PER_MINUTE)
+
+# ── Duration presets ──────────────────────────────────────────────────────────
+DURATION_PRESETS = {
+    30:  {"words": 70,  "paragraphs": 2},   # Test Pipeline
+    60:  {"words": 140, "paragraphs": 4},   # Short
+    90:  {"words": 210, "paragraphs": 6},   # Medium
+    120: {"words": 280, "paragraphs": 8},   # Long
+}
+
+def get_duration_config(duration_seconds: int) -> dict:
+    """Get word count and paragraph count for a given duration."""
+    if duration_seconds in DURATION_PRESETS:
+        return DURATION_PRESETS[duration_seconds]
+    # Custom duration — calculate dynamically
+    words = int((duration_seconds / 60) * WORDS_PER_MINUTE)
+    paragraphs = max(2, min(8, round(duration_seconds / 20)))
+    return {"words": words, "paragraphs": paragraphs}
 
 
+# ── Status tracking ───────────────────────────────────────────────────────────
+def update_status(story_id: str, current_agent: str, completed: list, status: str, **kwargs):
+    """Write current pipeline status to a JSON file for UI polling."""
+    folder = f"stories/story_{story_id}"
+    os.makedirs(folder, exist_ok=True)
+    path = f"{folder}/status.json"
+    data = {
+        "current_agent": current_agent,
+        "completed": completed,
+        "status": status,
+        "updated_at": datetime.now().isoformat(),
+        **kwargs
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+
+# ── Agent order for status tracking ──────────────────────────────────────────
+AGENT_ORDER = [
+    "trend_researcher",
+    "outline_agent",
+    "story_writer",
+    "quality_critic",
+    "scene_prompt_agent",
+    "metadata_agent",
+    "audio_generator",
+    "video_generator",
+    "save_content",
+]
+
+AGENT_LABELS = {
+    "trend_researcher":  "🔍 Researching trending topics",
+    "outline_agent":     "📝 Creating story outline",
+    "story_writer":      "✍️  Writing the story",
+    "quality_critic":    "🎯 Quality check",
+    "scene_prompt_agent":"🎨 Generating scene descriptions",
+    "metadata_agent":    "🏷️  Creating metadata",
+    "audio_generator":   "🎙️  Generating audio narration",
+    "video_generator":   "🎬 Generating images & video",
+    "save_content":      "💾 Saving & uploading",
+}
 
 
 class StoryState(TypedDict):
@@ -61,7 +114,7 @@ class StoryState(TypedDict):
     chosen_value: str
     outline: str
     character_descriptions: str
-    scene_prompts: list        # ← new: list of {"scene": str, "characters": list[str]}
+    scene_prompts: list
     story: str
     safety_score: float
     educational_score: float
@@ -76,15 +129,21 @@ class StoryState(TypedDict):
     audio_path: str
     story_id: str
     video_path: str
+    target_words: int       # ← new: passed from api.py based on duration
+    target_paragraphs: int  # ← new: passed from api.py based on duration
+
 
 # ── Node 1: Trend Researcher ──────────────────────────────────────────────────
 def trend_researcher(state: StoryState) -> dict:
+    story_id = state.get("story_id", "")
+    completed = []
+    update_status(story_id, "trend_researcher", completed, "running")
+
     logger.info("[Trend Researcher] Searching for trending kids topics...")
 
     used_topics = load_used_topics()
     avoid_str = ", ".join(used_topics[-10:]) if used_topics else "none"
 
-    # Rotate queries so we don't always hit the same search angle
     search_queries = [
         f"trending kids activities hobbies {month} 2026",
         f"popular kids story themes {month} 2026",
@@ -96,41 +155,37 @@ def trend_researcher(state: StoryState) -> dict:
     logger.info(f"[Trend Researcher] Search query: {query}")
 
     results = tavily.search(query=query, max_results=7)
-
     snippets = "\n".join(
         f"- {r['title']}: {r['content'][:150]}"
         for r in results.get("results", [])
     )
 
-    prompt = f"""You are a children's story writer.
-    Write a fun, engaging story for kids aged 4-8 based on this outline:
+    topic_prompt = f"""You are a kids content strategist.
+Based on these trending topics, pick ONE specific, engaging story topic for children aged 4-8.
+Avoid these recently used topics: {avoid_str}
 
-    {state['outline']}
+Trending topics:
+{snippets}
 
-    Requirements:
-    - Simple language a 5-year-old understands
-    - Short sentences
-    - Warm and positive tone
-    - Naturally teach the value of {state['chosen_value']}
-    - Length: {TARGET_WORD_COUNT - 20} to {TARGET_WORD_COUNT} words (be strict, do not exceed)
-    - Each paragraph should be a separate scene
-    - Separate each paragraph with a blank line
-    - Each paragraph = one scene (different moment in the story){feedback_section}"""
+Reply with ONLY the topic name, nothing else. Example: "Friendly Forest Animals" or "Space Adventure with a Robot"."""
 
-    response = llm.invoke(prompt)
+    response = llm.invoke(topic_prompt)
     topic = response.content.strip()
     logger.info(f"[Trend Researcher] Topic selected: {topic}")
+    save_used_topic(topic)
 
-    save_used_topic(topic)   # ← record it immediately
+    update_status(story_id, "outline_agent", ["trend_researcher"], "running")
     return {"trending_topic": topic}
 
 
 # ── Node 2: Outline Agent ─────────────────────────────────────────────────────
 def outline_agent(state: StoryState) -> dict:
-    import random
+    story_id = state.get("story_id", "")
+    completed = ["trend_researcher"] if not state.get("trending_topic_user") else []
+    update_status(story_id, "outline_agent", completed, "running")
+
     chosen_value = random.choice(VALUES)
 
-    # ── Step 1: Generate story outline ───────────────────────────────────────
     outline_prompt = f"""You are a children's story planner.
 Topic: {state['trending_topic']}
 Value to teach: {chosen_value}
@@ -147,7 +202,6 @@ Keep it simple and suitable for ages 4-8."""
     outline_response = llm.invoke(outline_prompt)
     outline = outline_response.content.strip()
 
-    # ── Step 2: Extract detailed visual character descriptions ────────────────
     character_prompt = f"""You are an animation art director for a children's cartoon show.
 
 Based on this story outline, write a compact visual description for each character.
@@ -178,21 +232,28 @@ Story outline:
     logger.info(f"[Outline Agent] Value chosen: {chosen_value}")
     logger.info(f"[Outline Agent] Character descriptions generated")
 
+    update_status(story_id, "story_writer", ["trend_researcher", "outline_agent"], "running")
     return {
         "chosen_value": chosen_value,
         "outline": outline,
-        "character_descriptions": character_descriptions,   # ← new
+        "character_descriptions": character_descriptions,
     }
 
 
 # ── Node 3: Story Writer ──────────────────────────────────────────────────────
 def story_writer(state: StoryState) -> dict:
-    critic_feedback = state.get("critic_feedback") or ""
+    story_id = state.get("story_id", "")
+    update_status(story_id, "story_writer",
+                  ["trend_researcher", "outline_agent"], "running")
 
+    critic_feedback = state.get("critic_feedback") or ""
     feedback_section = (
         f"\n\nPrevious critic feedback to address:\n{critic_feedback}"
         if critic_feedback else ""
     )
+
+    target_words = state.get("target_words", 210)
+    target_paragraphs = state.get("target_paragraphs", 6)
 
     prompt = f"""You are a children's story writer.
 Write a fun, engaging story for kids aged 4-8 based on this outline:
@@ -204,24 +265,32 @@ Requirements:
 - Short sentences
 - Warm and positive tone
 - Naturally teach the value of {state['chosen_value']}
-  - Length: {TARGET_WORD_COUNT - 20} to {TARGET_WORD_COUNT} words (be strict, do not exceed){feedback_section}"""
-    
+- Length: {target_words - 20} to {target_words} words (be strict, do not exceed)
+- Write EXACTLY {target_paragraphs} paragraphs
+- Each paragraph = one scene (different moment in the story)
+- Separate each paragraph with a blank line{feedback_section}"""
+
     response = llm.invoke(prompt)
     logger.info(f"[Story Writer] Story written (retry #{state.get('retry_count', 0)})")
+
+    update_status(story_id, "quality_critic",
+                  ["trend_researcher", "outline_agent", "story_writer"], "running")
     return {"story": response.content.strip()}
+
 
 # ── Node 3.5: Scene Prompt Agent ──────────────────────────────────────────────
 def scene_prompt_agent(state: StoryState) -> dict:
-    """Convert each story paragraph into a visual scene description for Imagen."""
+    story_id = state.get("story_id", "")
+    update_status(story_id, "scene_prompt_agent",
+                  ["trend_researcher", "outline_agent", "story_writer", "quality_critic"], "running")
+
     logger.info("[Scene Prompt Agent] Generating visual scene descriptions...")
 
     story = state["story"]
     character_descriptions = state.get("character_descriptions", "")
 
-    # Split into paragraphs same way video_generator does
     paragraphs = [p.strip() for p in story.split("\n") if p.strip()]
 
-    # Extract character names from descriptions
     character_names = []
     for line in character_descriptions.splitlines():
         if line.startswith("CHARACTER:"):
@@ -262,7 +331,6 @@ CHARACTERS: <comma-separated character names present, or NONE>
     response = llm.invoke(prompt)
     raw = response.content.strip()
 
-    # Parse the response
     scene_prompts = []
     blocks = raw.split("\n\n")
     for block in blocks:
@@ -277,12 +345,8 @@ CHARACTERS: <comma-separated character names present, or NONE>
                 if chars_raw.upper() != "NONE":
                     characters = [c.strip() for c in chars_raw.split(",")]
         if scene_desc:
-            scene_prompts.append({
-                "scene": scene_desc,
-                "characters": characters
-            })
+            scene_prompts.append({"scene": scene_desc, "characters": characters})
 
-    # Fallback — if parsing fails, use raw paragraphs
     if len(scene_prompts) != len(paragraphs):
         logger.warning(f"[Scene Prompt Agent] Parsed {len(scene_prompts)} scenes but expected {len(paragraphs)} — using fallback")
         scene_prompts = [
@@ -291,11 +355,19 @@ CHARACTERS: <comma-separated character names present, or NONE>
         ]
 
     logger.info(f"[Scene Prompt Agent] Generated {len(scene_prompts)} scene prompts")
+
+    update_status(story_id, "metadata_agent",
+                  ["trend_researcher", "outline_agent", "story_writer",
+                   "quality_critic", "scene_prompt_agent"], "running")
     return {"scene_prompts": scene_prompts}
 
 
 # ── Node 4: Quality Critic ────────────────────────────────────────────────────
 def quality_critic(state: StoryState) -> dict:
+    story_id = state.get("story_id", "")
+    update_status(story_id, "quality_critic",
+                  ["trend_researcher", "outline_agent", "story_writer"], "running")
+
     prompt = f"""You are a children's content quality critic.
 Evaluate this story on three dimensions. Reply ONLY in this exact format:
 
@@ -344,6 +416,11 @@ Outline it was based on:
 
 # ── Node 5: Metadata Agent ────────────────────────────────────────────────────
 def metadata_agent(state: StoryState) -> dict:
+    story_id = state.get("story_id", "")
+    update_status(story_id, "metadata_agent",
+                  ["trend_researcher", "outline_agent", "story_writer",
+                   "quality_critic", "scene_prompt_agent"], "running")
+
     prompt = f"""You are a kids YouTube content strategist.
 Based on this story about {state['chosen_value']}, generate metadata.
 Reply ONLY in this exact format:
@@ -369,6 +446,10 @@ Story:
     hashtags = [h.strip() for h in hashtags_raw.split(",")]
 
     logger.info("[Metadata Agent] Metadata generated")
+
+    update_status(story_id, "audio_generator",
+                  ["trend_researcher", "outline_agent", "story_writer",
+                   "quality_critic", "scene_prompt_agent", "metadata_agent"], "running")
     return {
         "title": extract("TITLE"),
         "description": extract("DESCRIPTION"),
@@ -377,8 +458,13 @@ Story:
     }
 
 
-
+# ── Node 6: Audio Generator ───────────────────────────────────────────────────
 def audio_generator(state: StoryState) -> dict:
+    story_id = state.get("story_id", "")
+    update_status(story_id, "audio_generator",
+                  ["trend_researcher", "outline_agent", "story_writer",
+                   "quality_critic", "scene_prompt_agent", "metadata_agent"], "running")
+
     logger.info("[Audio Generator] Converting story to audio...")
 
     import asyncio
@@ -395,71 +481,35 @@ def audio_generator(state: StoryState) -> dict:
     async def generate():
         communicate = edge_tts.Communicate(
             text=state["story"],
-            voice="en-AU-NatashaNeural",  # warm, friendly female voice
-            rate="-10%",   # slightly slower for kids
-            pitch="+5Hz"   # slightly higher pitch, friendlier
+            voice="en-AU-NatashaNeural",
+            rate="-10%",
+            pitch="+5Hz"
         )
         await communicate.save(audio_path)
 
     asyncio.run(generate())
 
     logger.info(f"[Audio Generator] Audio saved to {audio_path}")
+
+    update_status(story_id, "video_generator",
+                  ["trend_researcher", "outline_agent", "story_writer",
+                   "quality_critic", "scene_prompt_agent", "metadata_agent",
+                   "audio_generator"], "running")
     return {"audio_path": audio_path, "story_id": story_id}
 
-# ── Node 6: Save Content ──────────────────────────────────────────────────────
 
-
-# def save_content(state: StoryState) -> dict:
-#     import json
-#     from datetime import datetime
-
-#     try:
-#         story_id = state.get("story_id") or datetime.now().strftime("%Y%m%d_%H%M%S")
-#         folder = f"stories/story_{story_id}"
-#         os.makedirs(folder, exist_ok=True)
-#         filename = f"{folder}/story.json"
-
-#         output = {
-#             "topic": state.get("trending_topic"),
-#             "value": state.get("chosen_value"),
-#             "outline": state.get("outline"),
-#             "story": state.get("story"),
-#             "scores": {
-#                 "safety": state.get("safety_score"),
-#                 "educational": state.get("educational_score"),
-#                 "engagement": state.get("engagement_score"),
-#             },
-#             "passed_quality": state.get("passed_quality"),
-#             "retries": state.get("retry_count"),
-#             "metadata": {
-#                 "title": state.get("title"),
-#                 "description": state.get("description"),
-#                 "hashtags": state.get("hashtags"),
-#                 "thumbnail_concept": state.get("thumbnail_concept"),
-#             },
-#             "audio_path": state.get("audio_path"),    # ← add
-#             "video_path": state.get("video_path"),    # ← add
-#         }
-
-#         with open(filename, "w", encoding="utf-8") as f:   # ← encoding fix
-#             json.dump(output, f, indent=2, ensure_ascii=False)
-
-#         logger.info(f"[Save] Story saved to {filename}")
-
-#     except Exception as e:
-#         logger.error(f"[Save] FAILED to save JSON: {e}")   # ← catch silent crash
-
-#     return {}
-
-
-
+# ── Node 7: Save Content ──────────────────────────────────────────────────────
 def save_content(state: StoryState) -> dict:
-    import json
+    story_id = state.get("story_id", "")
+    update_status(story_id, "save_content",
+                  ["trend_researcher", "outline_agent", "story_writer",
+                   "quality_critic", "scene_prompt_agent", "metadata_agent",
+                   "audio_generator", "video_generator"], "running")
+
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
     import asyncio
 
-    story_id = state.get("story_id")
     folder = f"stories/story_{story_id}"
 
     output = {
@@ -492,16 +542,12 @@ def save_content(state: StoryState) -> dict:
         async with stdio_client(server_params) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
-
-                # Tool 1 — save locally
                 await session.call_tool("save_local", {
                     "folder": folder,
                     "filename": "story.json",
                     "content": output
                 })
                 logger.info("[MCP Client] Local save done")
-
-                # Tool 2 — upload story.json to Drive
                 await session.call_tool("upload_to_drive", {
                     "file_path": f"{folder}/story.json",
                     "drive_folder_name": "Kids Stories"
@@ -510,9 +556,10 @@ def save_content(state: StoryState) -> dict:
 
     asyncio.run(run_mcp())
     return {}
-# ── Node 0: Check Topic (entry point) ────────────────────────────────────────
+
+
+# ── Node 0: Check Topic ───────────────────────────────────────────────────────
 def check_topic_node(state: StoryState) -> dict:
-    """No-op node — just routes based on whether topic is pre-filled."""
     return {}
 
 def route_entry(state: StoryState) -> str:

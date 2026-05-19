@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StoryStudio — AI Kids Content Generator</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;500;600&display=swap"
+        rel="stylesheet">
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0
+        }
+
+        :root {
+            --bg: #111110;
+            --surface: #181817;
+            --surface2: #1f1f1e;
+            --surface3: #272726;
+            --border: #2a2a28;
+            --border2: #333331;
+            --text: #f2ede6;
+            --muted: #6a6a65;
+            --muted2: #4a4a47;
+            --green: #1D9E75;
+            --green-dim: #0c1f19;
+            --green-bright: #4fd4a8;
+            --green-border: #155c44;
+            --mono: 'DM Mono', monospace;
+            --sans: 'Syne', sans-serif;
+        }
+
+        html,
+        body {
+            height: 100%;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--sans);
+            font-size: 14px;
+            line-height: 1.5
+        }
+
+        .app {
+            display: flex;
+            height: 100vh;
+            overflow: hidden
+        }
+
+        .sidebar {
+            width: 200px;
+            background: var(--surface);
+            border-right: 0.5px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0
+        }
+
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden
+        }
+
+        .sidebar-top {
+            padding: 20px 16px 16px;
+            border-bottom: 0.5px solid var(--border)
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 9px
+        }
+
+        .logo-icon {
+            width: 26px;
+            height: 26px;
+            background: var(--green);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0
+        }
+
+        .logo-icon svg {
+            width: 13px;
+            height: 13px
+        }
+
+        .logo-name {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text);
+            letter-spacing: -0.01em
+        }
+
+        .logo-tag {
+            font-size: 9px;
+            color: var(--muted);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            font-family: var(--mono);
+            margin-top: 1px
+        }
+
+        .nav {
+            padding: 12px 8px
+        }
+
+        .nav-section {
+            font-size: 9px;
+            color: var(--muted2);
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            font-family: var(--mono);
+            padding: 0 8px;
+            margin-bottom: 6px
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            color: var(--muted);
+            font-size: 12px;
+            transition: all 0.15s
+        }
+
+        .nav-item:hover {
+            color: var(--text);
+            background: var(--surface2)
+        }
+
+        .nav-item.active {
+            color: var(--text);
+            background: var(--surface3)
+        }
+
+        .nav-item svg {
+            width: 14px;
+            height: 14px;
+            opacity: 0.7
+        }
+
+        .sidebar-foot {
+            margin-top: auto;
+            padding: 14px 16px;
+            border-top: 0.5px solid var(--border)
+        }
+
+        .version {
+            font-family: var(--mono);
+            font-size: 9px;
+            color: var(--muted2);
+            margin-bottom: 4px
+        }
+
+        .model-badge {
+            font-family: var(--mono);
+            font-size: 9px;
+            color: var(--green);
+            background: var(--green-dim);
+            border: 0.5px solid var(--green-border);
+            border-radius: 4px;
+            padding: 2px 6px;
+            display: inline-block
+        }
+
+        .topbar {
+            padding: 16px 24px;
+            border-bottom: 0.5px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0
+        }
+
+        .topbar-left h1 {
+            font-size: 16px;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            color: var(--text)
+        }
+
+        .topbar-left p {
+            font-size: 11px;
+            color: var(--muted);
+            margin-top: 2px;
+            font-family: var(--mono)
+        }
+
+        .status-badge {
+            font-family: var(--mono);
+            font-size: 10px;
+            padding: 5px 12px;
+            border-radius: 20px;
+            border: 0.5px solid var(--border2);
+            color: var(--muted);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.3s
+        }
+
+        .status-badge .dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--muted2);
+            flex-shrink: 0;
+            transition: all 0.3s
+        }
+
+        .status-badge.running {
+            border-color: var(--green);
+            color: var(--green-bright);
+            background: var(--green-dim);
+            font-weight: 500;
+            padding: 6px 14px;
+            font-size: 11px
+        }
+
+        .status-badge.running .dot {
+            background: var(--green);
+            animation: pulse 1.4s infinite;
+            width: 8px;
+            height: 8px
+        }
+
+        .status-badge.done {
+            border-color: var(--green);
+            color: var(--green-bright);
+            background: var(--green-dim);
+            font-weight: 500
+        }
+
+        .status-badge.done .dot {
+            background: var(--green)
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1
+            }
+
+            50% {
+                opacity: 0.3
+            }
+        }
+
+        .content {
+            flex: 1;
+            display: grid;
+            grid-template-columns: 1fr 280px;
+            gap: 0;
+            overflow: hidden
+        }
+
+        .left-col {
+            padding: 24px;
+            border-right: 0.5px solid var(--border);
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 22px
+        }
+
+        .right-col {
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column
+        }
+
+        .field-group {
+            display: flex;
+            flex-direction: column;
+            gap: 7px
+        }
+
+        .field-label {
+            font-family: var(--mono);
+            font-size: 9px;
+            color: var(--muted);
+            letter-spacing: 0.1em;
+            text-transform: uppercase
+        }
+
+        .topic-input {
+            width: 100%;
+            background: var(--surface2);
+            border: 0.5px solid var(--border2);
+            border-radius: 8px;
+            padding: 12px 14px;
+            color: var(--text);
+            font-size: 13px;
+            font-family: var(--sans);
+            resize: none;
+            outline: none;
+            transition: border-color 0.15s;
+            line-height: 1.6
+        }
+
+        .topic-input:focus {
+            border-color: var(--green-border)
+        }
+
+        .topic-input::placeholder {
+            color: var(--muted2)
+        }
+
+        .dur-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 6px
+        }
+
+        .dur-card {
+            background: var(--surface2);
+            border: 0.5px solid var(--border2);
+            border-radius: 8px;
+            padding: 11px 8px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.15s
+        }
+
+        .dur-card:hover {
+            border-color: var(--border);
+            background: var(--surface3)
+        }
+
+        .dur-card.sel {
+            border-color: var(--green);
+            background: var(--green-dim)
+        }
+
+        .dur-name {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text);
+            margin-bottom: 2px
+        }
+
+        .dur-card.sel .dur-name {
+            color: var(--green-bright)
+        }
+
+        .dur-time {
+            font-family: var(--mono);
+            font-size: 10px;
+            color: var(--muted)
+        }
+
+        .dur-card.sel .dur-time {
+            color: var(--green)
+        }
+
+        .dur-scenes {
+            font-family: var(--mono);
+            font-size: 9px;
+            color: var(--muted2);
+            margin-top: 3px
+        }
+
+        .dur-card.sel .dur-scenes {
+            color: var(--green-border)
+        }
+
+        .gen-btn {
+            width: 100%;
+            padding: 13px;
+            border-radius: 8px;
+            background: var(--green);
+            color: #fff;
+            font-size: 13px;
+            font-weight: 600;
+            font-family: var(--sans);
+            border: none;
+            cursor: pointer;
+            letter-spacing: -0.01em;
+            transition: all 0.15s
+        }
+
+        .gen-btn:hover {
+            background: #18865f
+        }
+
+        .gen-btn:active {
+            transform: scale(0.99)
+        }
+
+        .gen-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed
+        }
+
+        .story-id-row {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            background: var(--surface2);
+            border: 0.5px solid var(--border2);
+            border-radius: 6px;
+            padding: 8px 12px
+        }
+
+        .story-id-row.visible {
+            display: flex
+        }
+
+        .story-id-label {
+            font-family: var(--mono);
+            font-size: 9px;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.08em
+        }
+
+        .story-id-val {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--green-bright);
+            flex: 1
+        }
+
+        .panel-section {
+            border-bottom: 0.5px solid var(--border);
+            padding: 16px 20px
+        }
+
+        .panel-title {
+            font-family: var(--mono);
+            font-size: 9px;
+            color: var(--muted2);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin-bottom: 14px
+        }
+
+        .steps {
+            display: flex;
+            flex-direction: column
+        }
+
+        .step-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px
+        }
+
+        .step-track {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 14px;
+            flex-shrink: 0;
+            padding-top: 3px
+        }
+
+        .step-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            border: 0.5px solid var(--border2);
+            background: var(--surface3);
+            flex-shrink: 0;
+            transition: all 0.3s
+        }
+
+        .step-dot.done {
+            background: var(--green);
+            border-color: var(--green)
+        }
+
+        .step-dot.running {
+            background: var(--text);
+            border-color: var(--text);
+            animation: pulse 1.2s infinite
+        }
+
+        .step-line {
+            width: 0.5px;
+            background: var(--border);
+            flex: 1;
+            min-height: 14px;
+            transition: background 0.3s
+        }
+
+        .step-line.done {
+            background: var(--green)
+        }
+
+        .step-body {
+            padding-bottom: 14px;
+            flex: 1;
+            padding-top: 1px
+        }
+
+        .step-name {
+            font-size: 11px;
+            color: var(--muted);
+            transition: color 0.3s;
+            line-height: 1.4
+        }
+
+        .step-name.done {
+            color: var(--green-bright)
+        }
+
+        .step-name.running {
+            color: var(--text)
+        }
+
+        .result-panel {
+            padding: 16px 20px;
+            display: none;
+            border-top: 0.5px solid var(--green-border);
+            background: var(--green-dim)
+        }
+
+        .result-panel.visible {
+            display: block
+        }
+
+        .result-done-label {
+            font-family: var(--mono);
+            font-size: 9px;
+            color: var(--green);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin-bottom: 8px
+        }
+
+        .result-title-text {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text);
+            margin-bottom: 14px;
+            line-height: 1.4;
+            letter-spacing: -0.01em
+        }
+
+        .url-block {
+            margin-bottom: 10px
+        }
+
+        .url-label {
+            font-family: var(--mono);
+            font-size: 9px;
+            color: var(--muted);
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-bottom: 5px
+        }
+
+        .url-row {
+            background: rgba(0, 0, 0, 0.3);
+            border: 0.5px solid var(--green-border);
+            border-radius: 6px;
+            padding: 8px 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px
+        }
+
+        .url-text {
+            font-family: var(--mono);
+            font-size: 9px;
+            color: var(--muted);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex: 1
+        }
+
+        .url-actions {
+            display: flex;
+            gap: 4px;
+            flex-shrink: 0
+        }
+
+        .url-copy {
+            font-family: var(--mono);
+            font-size: 9px;
+            color: var(--green-bright);
+            border: 0.5px solid var(--green-border);
+            border-radius: 4px;
+            padding: 3px 7px;
+            background: transparent;
+            cursor: pointer;
+            transition: all 0.15s
+        }
+
+        .url-copy:hover {
+            background: var(--green);
+            color: #fff;
+            border-color: var(--green)
+        }
+
+        .url-open {
+            font-family: var(--mono);
+            font-size: 9px;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            padding: 3px 7px;
+            background: var(--green);
+            cursor: pointer;
+            transition: all 0.15s;
+            text-decoration: none;
+            display: inline-block
+        }
+
+        .url-open:hover {
+            background: #18865f
+        }
+
+        .error-box {
+            background: #1a0c0c;
+            border: 0.5px solid #5c1f1f;
+            border-radius: 6px;
+            padding: 10px 12px;
+            font-family: var(--mono);
+            font-size: 10px;
+            color: #f09595;
+            display: none
+        }
+
+        .error-box.visible {
+            display: block
+        }
+
+        ::-webkit-scrollbar {
+            width: 4px
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border2);
+            border-radius: 2px
+        }
+    </style>
+</head>
+
+<body>
+    <div class="app">
+
+        <div class="sidebar">
+            <div class="sidebar-top">
+                <div class="logo">
+                    <div class="logo-icon">
+                        <svg viewBox="0 0 13 13" fill="none" stroke="#fff" stroke-width="1.8">
+                            <polygon points="2,1.5 11,6.5 2,11.5" />
+                        </svg>
+                    </div>
+                    <div>
+                        <div class="logo-name">StoryStudio</div>
+                        <div class="logo-tag">AI · Content</div>
+                    </div>
+                </div>
+            </div>
+            <div class="nav">
+                <div class="nav-section">Workspace</div>
+                <div class="nav-item active">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <rect x="2" y="2" width="12" height="12" rx="2" />
+                        <path d="M6 8l2 2 4-4" />
+                    </svg>
+                    Generate
+                </div>
+            </div>
+            <div class="sidebar-foot">
+                <div class="version">v2.1.0</div>
+                <div class="model-badge">Vertex AI Imagen 3</div>
+            </div>
+        </div>
+
+        <div class="main">
+            <div class="topbar">
+                <div class="topbar-left">
+                    <h1>New video</h1>
+                    <p>Generate a kids story video from a topic</p>
+                </div>
+                <div class="status-badge" id="statusBadge">
+                    <div class="dot"></div>
+                    <span id="statusText">Ready</span>
+                </div>
+            </div>
+
+            <div class="content">
+                <div class="left-col">
+
+                    <div class="field-group">
+                        <div class="field-label">Story topic</div>
+                        <textarea class="topic-input" id="topicInput" rows="2"
+                            placeholder="e.g. A kind lion who helps his friends in the jungle..."></textarea>
+                    </div>
+
+                    <div class="field-group">
+                        <div class="field-label">Duration</div>
+                        <div class="dur-grid">
+                            <div class="dur-card" data-dur="30" onclick="selectDur(this)">
+                                <div class="dur-name">Test</div>
+                                <div class="dur-time">30s</div>
+                                <div class="dur-scenes">2 scenes</div>
+                            </div>
+                            <div class="dur-card sel" data-dur="60" onclick="selectDur(this)">
+                                <div class="dur-name">Short</div>
+                                <div class="dur-time">60s</div>
+                                <div class="dur-scenes">4 scenes</div>
+                            </div>
+                            <div class="dur-card" data-dur="90" onclick="selectDur(this)">
+                                <div class="dur-name">Medium</div>
+                                <div class="dur-time">90s</div>
+                                <div class="dur-scenes">6 scenes</div>
+                            </div>
+                            <div class="dur-card" data-dur="120" onclick="selectDur(this)">
+                                <div class="dur-name">Long</div>
+                                <div class="dur-time">120s</div>
+                                <div class="dur-scenes">8 scenes</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button class="gen-btn" id="genBtn" onclick="generate()">Generate Video</button>
+
+                    <div class="story-id-row" id="storyIdRow">
+                        <span class="story-id-label">Job ID</span>
+                        <span class="story-id-val" id="storyIdVal">—</span>
+                    </div>
+
+                    <div class="error-box" id="errorBox"></div>
+
+                </div>
+
+                <div class="right-col">
+                    <div class="panel-section">
+                        <div class="panel-title">Pipeline</div>
+                        <div class="steps" id="stepsContainer"></div>
+                    </div>
+
+                    <div class="result-panel" id="resultPanel">
+                        <div class="result-done-label">Output ready</div>
+                        <div class="result-title-text" id="resultTitle">—</div>
+                        <div class="url-block">
+                            <div class="url-label">Video</div>
+                            <div class="url-row">
+                                <div class="url-text" id="videoUrl">—</div>
+                                <div class="url-actions">
+                                    <div class="url-copy" onclick="copyUrl('videoUrl')">Copy</div>
+                                    <a class="url-open" id="videoOpen" href="#" target="_blank">Open</a>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="url-block">
+                            <div class="url-label">Audio</div>
+                            <div class="url-row">
+                                <div class="url-text" id="audioUrl">—</div>
+                                <div class="url-actions">
+                                    <div class="url-copy" onclick="copyUrl('audioUrl')">Copy</div>
+                                    <a class="url-open" id="audioOpen" href="#" target="_blank">Open</a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const AGENTS = [
+            { key: 'trend_researcher', label: 'Researching trending topics' },
+            { key: 'outline_agent', label: 'Creating story outline & characters' },
+            { key: 'story_writer', label: 'Writing the story' },
+            { key: 'quality_critic', label: 'Quality review' },
+            { key: 'scene_prompt_agent', label: 'Generating scene descriptions' },
+            { key: 'metadata_agent', label: 'Creating title & metadata' },
+            { key: 'audio_generator', label: 'Generating audio narration' },
+            { key: 'video_generator', label: 'Generating images & video' },
+            { key: 'save_content', label: 'Saving & uploading' },
+        ];
+
+        let selectedDur = 60;
+        let pollInterval = null;
+
+        function buildSteps() {
+            const container = document.getElementById('stepsContainer');
+            container.innerHTML = AGENTS.map((a, i) => `
+    <div class="step-row" id="step-${a.key}">
+      <div class="step-track">
+        <div class="step-dot" id="dot-${a.key}"></div>
+        ${i < AGENTS.length - 1 ? `<div class="step-line" id="line-${a.key}"></div>` : ''}
+      </div>
+      <div class="step-body">
+        <div class="step-name" id="name-${a.key}">${a.label}</div>
+      </div>
+    </div>
+  `).join('');
+        }
+
+        function selectDur(el) {
+            document.querySelectorAll('.dur-card').forEach(c => c.classList.remove('sel'));
+            el.classList.add('sel');
+            selectedDur = parseInt(el.dataset.dur);
+        }
+
+        function setStatus(state, text) {
+            const badge = document.getElementById('statusBadge');
+            badge.className = 'status-badge ' + (state || '');
+            document.getElementById('statusText').textContent = text;
+        }
+
+        function updateSteps(completed, currentAgent) {
+            AGENTS.forEach((a) => {
+                const dot = document.getElementById('dot-' + a.key);
+                const name = document.getElementById('name-' + a.key);
+                const line = document.getElementById('line-' + a.key);
+                const isDone = completed && completed.includes(a.key);
+                const isRunning = a.key === currentAgent;
+                dot.className = 'step-dot' + (isDone ? ' done' : isRunning ? ' running' : '');
+                name.className = 'step-name' + (isDone ? ' done' : isRunning ? ' running' : '');
+                if (line) line.className = 'step-line' + (isDone ? ' done' : '');
+            });
+        }
+
+        function showResult(data) {
+            document.getElementById('resultPanel').classList.add('visible');
+            document.getElementById('resultTitle').textContent = data.title || 'Untitled';
+            document.getElementById('videoUrl').textContent = data.video_url || '—';
+            document.getElementById('audioUrl').textContent = data.audio_url || '—';
+            if (data.video_url) document.getElementById('videoOpen').href = data.video_url;
+            if (data.audio_url) document.getElementById('audioOpen').href = data.audio_url;
+        }
+
+        function copyUrl(elId) {
+            const text = document.getElementById(elId).textContent;
+            navigator.clipboard.writeText(text).catch(() => { });
+        }
+
+        async function generate() {
+            const topic = document.getElementById('topicInput').value.trim();
+            const btn = document.getElementById('genBtn');
+            const errorBox = document.getElementById('errorBox');
+
+            errorBox.classList.remove('visible');
+            document.getElementById('resultPanel').classList.remove('visible');
+            btn.disabled = true;
+            btn.textContent = 'Starting pipeline...';
+            setStatus('running', 'Starting');
+            updateSteps([], null);
+
+            try {
+                const params = new URLSearchParams({ topic, duration: selectedDur });
+                const res = await fetch(`/run?${params}`, { method: 'POST' });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+
+                document.getElementById('storyIdRow').classList.add('visible');
+                document.getElementById('storyIdVal').textContent = data.story_id;
+                btn.textContent = 'Pipeline running...';
+                startPolling(data.story_id);
+
+            } catch (e) {
+                errorBox.textContent = 'Failed to start pipeline: ' + e.message;
+                errorBox.classList.add('visible');
+                btn.disabled = false;
+                btn.textContent = 'Generate Video';
+                setStatus('', 'Error');
+            }
+        }
+
+        function startPolling(storyId) {
+            if (pollInterval) clearInterval(pollInterval);
+            pollInterval = setInterval(() => poll(storyId), 3000);
+        }
+
+        async function poll(storyId) {
+            try {
+                const res = await fetch(`/status/${storyId}`);
+                if (!res.ok) return;
+                const data = await res.json();
+
+                updateSteps(data.completed || [], data.current_agent);
+
+                if (data.current_agent) {
+                    const agent = AGENTS.find(a => a.key === data.current_agent);
+                    setStatus('running', agent ? agent.label : data.current_agent);
+                    document.getElementById('genBtn').textContent = (agent ? agent.label : 'Running') + '...';
+                }
+
+                if (data.status === 'done') {
+                    clearInterval(pollInterval);
+                    updateSteps(data.completed, null);
+                    setStatus('done', 'Complete');
+                    document.getElementById('genBtn').disabled = false;
+                    document.getElementById('genBtn').textContent = 'Generate Video';
+                    showResult(data);
+                }
+
+                if (data.status === 'error') {
+                    clearInterval(pollInterval);
+                    setStatus('', 'Error');
+                    document.getElementById('genBtn').disabled = false;
+                    document.getElementById('genBtn').textContent = 'Generate Video';
+                    document.getElementById('errorBox').textContent = 'Pipeline error: ' + (data.error || 'Unknown error');
+                    document.getElementById('errorBox').classList.add('visible');
+                }
+
+            } catch (e) { console.error('Poll error:', e); }
+        }
+
+        buildSteps();
+    </script>
+</body>
+
+</html>
